@@ -29,13 +29,17 @@ export function SignUp() {
             headers: header,
             signal: controller.signal
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) throw new Error(response.statusText)
+            return response.json()
+        })
         .then((res) => {
             if (res.length != 0) {
                 setState("taken")
                 return false
             }
-        })   
+            return true
+        })
         .catch((err) => {
             setState("error")
             return false
@@ -52,6 +56,12 @@ export function SignUp() {
             method: 'POST',
             body: JSON.stringify(data),
             headers: header
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(response.statusText)
+            document.cookie = "username="+data.username;
+            document.cookie = "pass="+data.pass;
+            setState("success")
         })
         .catch(() => {setState("error")})
     }
@@ -93,11 +103,18 @@ export function SignUp() {
                 onChange={handleChange} name="pass"
             />
             <button
+                className="btn"
+                disabled={state === "submitting"}
                 onClick={handleClick}>
                 Submit
             </button>
             {(state === "typing") && <p>Please create a Username and password. Your Username must be unique.</p>}
-            {(state === "success") && <p>You have successfully created an account!</p>}
+            {(state === "success") && <>
+                <p>You have successfully created an account!</p>
+                <button className="btn-secondary" onClick={() => navigate("/profile-page")}>
+                    Go to Profile
+                </button>
+            </>}
             {(state === "error") && <p>An error has occured, please try again.</p>}
             {(state === "submitting") && <p>Processing...</p>}
             {(state === "taken") && <p>There already exists an account with that username</p>}

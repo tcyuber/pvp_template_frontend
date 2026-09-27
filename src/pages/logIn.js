@@ -98,7 +98,9 @@ export function LogIn() {
                 disabled={state === "submitting"}
                 onChange={handleChange} name="pass"
             />
-            <button 
+            <button
+                className="btn"
+                disabled={state === "submitting"}
                 onClick={handleClick}>
                 Submit
             </button>

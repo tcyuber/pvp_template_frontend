@@ -22,11 +22,11 @@ export function Menu() {
     return (
         <div>
         <nav>
-        <ul>
+        <ul className="nav-list">
             <li> <Link to="/computer"> computer </Link> </li>
             <li> <Link to="/player-match"> player match </Link> </li>
             <li> <Link to="/profile-page"> profile page </Link></li>
-            <li> <button onClick={logout}> logout </button> </li>
+            <li> <button className="text-red-600" onClick={logout}> logout </button> </li>
         </ul>       
         </nav>
         </div>

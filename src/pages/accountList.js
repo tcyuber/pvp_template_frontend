@@ -37,9 +37,9 @@ export function AccountList() {
     return (
         <div>
             <h1> list of accounts </h1>
-            <div>
+            <div className="flex flex-col gap-3">
                 {accounts.map((account) => (
-                    <div>
+                    <div className="card" key={account.id}>
                         <h2>id: {account.id} </h2>
                         <h3>user: {account.username}</h3>
                         <h3>pass: {account.pass}</h3>

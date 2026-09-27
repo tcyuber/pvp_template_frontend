@@ -10,6 +10,7 @@ import { SignUp } from './pages/signUp';
 
 function App() {
   return (
+    <main className="page">
     <Routes>
       <Route index element={<Home />} />
       <Route path="/account-list" element={<AccountList />} />
@@ -20,6 +21,7 @@ function App() {
       <Route path="/player-match" element={<PlayerMatch />} />
       <Route path="/profile-page" element={<ProfilePage />} />
     </Routes>
+    </main>
   );
 }
 

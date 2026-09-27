@@ -2,11 +2,34 @@ import { useNavigate } from "react-router-dom"
 import { useState, useEffect, useRef } from 'react'
 import cookieParser from '../cookieParser'
 
+const INITIAL_BOARD = {
+    A1: {backgroundColor: 'black'},
+    A2: {backgroundColor: 'grey'},
+    A3: {backgroundColor: 'grey'},
+    A4: {backgroundColor: 'grey'},
+
+    B1: {backgroundColor: 'red'},
+    B2: {backgroundColor: 'blue'},
+    B3: {backgroundColor: 'blue'},
+    B4: {backgroundColor: 'blue'},
+    
+    C1: {backgroundColor: 'red'},
+    C2: {backgroundColor: 'red'},
+    C3: {backgroundColor: 'red'},
+    C4: {backgroundColor: 'blue'},
+
+    D1: {backgroundColor: 'grey'},
+    D2: {backgroundColor: 'grey'},
+    D3: {backgroundColor: 'grey'},
+    D4: {backgroundColor: 'black'}
+};
+
 export function PlayerMatch() {
     const connection = useRef(null);                    // socket
     const navigate = useNavigate();                     // send them back to log-in
-    const [srvrMsg, setSrvrMsg] = useState("");         // msg to be sent
-    const [localMsg, setLocalMsg] = useState("");       // global msg that should be displayed to all users
+    const [chatHistory, setChatHistory] = useState([]); // [{sender, text}] received from the server
+    const [localMsg, setLocalMsg] = useState("");       // msg being typed
+    const chatEnd = useRef(null);                       // for scrolling to newest msg
     // phases (state diagram waow):
     //
     // l-move -> coin-move -> legal-moves -> l-move   (other players turn)
@@ -18,32 +41,32 @@ export function PlayerMatch() {
         player_2: "",
         player_turn: "player_1",
         phase: "l-move",
+        started: false,
         no_turns: 0 
     })
-    const [boardState, setBoardState] = useState({
-        A1: {backgroundColor: 'black'},
-        A2: {backgroundColor: 'grey'},
-        A3: {backgroundColor: 'grey'},
-        A4: {backgroundColor: 'grey'},
-
-        B1: {backgroundColor: 'red'},
-        B2: {backgroundColor: 'blue'},
-        B3: {backgroundColor: 'blue'},
-        B4: {backgroundColor: 'blue'},
-        
-        C1: {backgroundColor: 'red'},
-        C2: {backgroundColor: 'red'},
-        C3: {backgroundColor: 'red'},
-        C4: {backgroundColor: 'blue'},
-
-        D1: {backgroundColor: 'grey'},
-        D2: {backgroundColor: 'grey'},
-        D3: {backgroundColor: 'grey'},
-        D4: {backgroundColor: 'black'}
-    });
+    const [boardState, setBoardState] = useState(INITIAL_BOARD);
     const [selectedSquares, setSelectedSquares] = useState([]);
 
     let user = cookieParser(document.cookie).user;
+
+    // which slot this session holds, assigned by the server
+    const [myPlayer, setMyPlayer] = useState("spectator");
+    const isMyTurn = gameState.started && gameState.player_turn === myPlayer;
+    const isSpectator = myPlayer === "spectator";
+
+    const playerColours = {player_1: 'red', player_2: 'blue'};
+    const selectedColours = {player_1: '#FFB6C1', player_2: '#89CFF0'};   // light pink, baby blue
+    const coinSelectedColour = '#D3D3D3';                                  // light grey
+
+    // selected squares are shown in the selecting player's highlight colour,
+    // or light grey when selecting coins
+    const squareStyle = (name) => ({
+        backgroundColor: !selectedSquares.includes(name)
+            ? boardState[name].backgroundColor
+            : (gameState.phase === "coin-move")
+                ? coinSelectedColour
+                : selectedColours[gameState.player_turn]
+    });
 
     // ---------------------------------------------------------------------------------------------------------------------
     //                                                    HOOKS
@@ -55,6 +78,11 @@ export function PlayerMatch() {
             navigate("/log-in");
         }
     }, []);
+
+    // selections don't carry over between turns or phases
+    useEffect(() => {
+        setSelectedSquares([]);
+    }, [gameState.player_turn, gameState.phase]);
 
     // Socket hook
     useEffect(() => {
@@ -86,14 +114,30 @@ export function PlayerMatch() {
 
             if (parsed_message.msg_type == "phase-change") {
                 makePhaseChange(parsed_message);
+            } else if (parsed_message.msg_type == "players") {
+                const { player_1, player_2, you } = parsed_message.msg_content;
+                setGameState(prevState => ({...prevState, player_1, player_2}));
+                setMyPlayer(you);
+            } else if (parsed_message.msg_type == "game-start") {
+                setBoardState(INITIAL_BOARD);
+                setGameState(prevState => ({...prevState, started: true, player_turn: parsed_message.msg_content.first, phase: "l-move", no_turns: 0}));
+            } else if (parsed_message.msg_type == "game-sync") {
+                // joined mid-game: apply the moves made so far to the starting board
+                const { player_turn, phase, board_changes } = parsed_message.msg_content;
+                const board = {...INITIAL_BOARD};
+                for (const square in board_changes) {
+                    board[square] = {backgroundColor: board_changes[square]};
+                }
+                setBoardState(board);
+                setGameState(prevState => ({...prevState, started: true, player_turn, phase}));
+            } else if (parsed_message.msg_type == "game-waiting") {
+                setGameState(prevState => ({...prevState, started: false}));
             } else if (parsed_message.msg_type == "chat") {
                 printMsg(parsed_message);
             } else if (parsed_message.msg_type == "l-move") {
                 makeMove(parsed_message);
-                sendPhaseChange("coin-move");
             } else if (parsed_message.msg_type == "coin-move") {
                 makeMove(parsed_message);
-                sendPhaseChange("l-move");
             } else {
                 console.log("["+user+"]: tried to make action type: "+parsed_message.msg_type);
             }
@@ -118,18 +162,33 @@ export function PlayerMatch() {
     // called by socket reciever here
     const printMsg = (parsed_message) => {
         console.log("["+user+"]: recieved message: "+parsed_message.msg_content);
-        setSrvrMsg(parsed_message.msg_content);
+        setChatHistory(prevHistory => [...prevHistory, {sender: parsed_message.sender, text: parsed_message.msg_content}]);
     }
 
     // send data to socket server
     const sendMessage = (e) => {
+        e.preventDefault();
+        if (localMsg.trim() === "") return;
         let message = {
             msg_type: "chat",
             msg_content: localMsg
         };
         console.log("["+user+"] sending message: "+localMsg);
         connection.current.send(JSON.stringify(message));
+        setLocalMsg("");
     };
+
+    // players' names are shown in their piece colour, spectators in green
+    const senderColour = (sender) => {
+        if (sender === gameState.player_1) return playerColours.player_1;
+        if (sender === gameState.player_2) return playerColours.player_2;
+        return 'green';
+    }
+
+    // keep the newest message in view
+    useEffect(() => {
+        chatEnd.current?.scrollIntoView({ block: "nearest" });
+    }, [chatHistory]);
 
     // ---------------------------------------------------------------------------------------------------------------------
     //                                                PHASE-CHANGE
@@ -167,6 +226,7 @@ export function PlayerMatch() {
 
     // makes sure only legal moves are selected depending on game phase
     const selectButton = (e) => {
+        if (!isMyTurn) return;
         console.log("phase: "+gameState.phase);
         if (gameState.phase == "l-move") {
             if (boardState[e.target.name].backgroundColor == 'grey') {
@@ -184,9 +244,20 @@ export function PlayerMatch() {
         } else if (gameState.phase == "coin-move") {
             if ((boardState[e.target.name].backgroundColor == 'black') || 
                 (boardState[e.target.name].backgroundColor == 'grey')) {
-                updateSelected(e.target.name);
+                updateCoinSelected(e.target.name);
             }
         }
+    }
+
+    // at most one coin (black) and one destination (grey) can be selected;
+    // selecting a new square replaces the selected square of the same colour
+    const updateCoinSelected = (name) => {
+        const colour = boardState[name].backgroundColor;
+        setSelectedSquares(prevSelectedSquares => (
+            prevSelectedSquares.includes(name)
+                ? prevSelectedSquares.filter(square => square !== name)
+                : [...prevSelectedSquares.filter(square => boardState[square].backgroundColor !== colour), name]
+        ));
     }
 
     // ---------------------------------------------------------------------------------------------------------------------
@@ -245,6 +316,8 @@ export function PlayerMatch() {
             selectedSquares.forEach((square) => {
                 updateSquare('l-move', square, player_colour);
             });
+            // only the moving player sends the phase change, once
+            sendPhaseChange("coin-move");
         } else {
             console.log("not a valid l-move");
         }
@@ -335,6 +408,7 @@ export function PlayerMatch() {
                     updateSquare('coin-move', square, 'grey');
                 }
             });
+            sendPhaseChange("l-move");
         } else {
             console.log("not a valid coin move");
         }
@@ -366,140 +440,181 @@ export function PlayerMatch() {
     // ---------------------------------------------------------------------------------------------------------------------
 
     return (
-        <div>
-            Player Match
-            <input
-                onChange={handleChange}
-                name="text"
-                placeholder="Message..." />
-            <button onClick={sendMessage}>Send</button>
-            <p>local message: {localMsg}</p>
-            <br></br>
-            <p>global message: {srvrMsg}</p>
-            <br></br>
-            <p>{gameState.player_turn} turn to move...</p>
-            <br></br>
-            <p>Phase: {gameState.phase}</p>
-            <br></br>
-            <p>Selected squares: {selectedSquares}</p>
+        <div className="wide flex flex-col gap-6 md:flex-row md:items-start">
+        <div className="flex flex-1 flex-col gap-3">
+            <h1>Player Match</h1>
+            {(!gameState.started) && <p className="text-slate-500">Waiting for another player to join...</p>}
+            {(gameState.started) && <>
+                <p>
+                    <span className="font-semibold" style={{color: playerColours[gameState.player_turn]}}>
+                        {gameState[gameState.player_turn]}
+                    </span>'s turn to move...
+                </p>
+                <p>Phase: {gameState.phase}</p>
+            </>}
 
+            <div className="board">
             <button // A1
                 name="A1"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.A1.backgroundColor}}>
+                style={squareStyle("A1")}>
                     
             </button>
             <button // B1
                 name="B1"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.B1.backgroundColor}}>
+                style={squareStyle("B1")}>
                     
             </button>
             <button // C1
                 name="C1"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.C1.backgroundColor}}>
+                style={squareStyle("C1")}>
                     
             </button>
             <button // D1
                 name="D1"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.D1.backgroundColor}}>
+                style={squareStyle("D1")}>
                     
             </button>
-
-            <br></br>
-
             <button // A2
                 name="A2"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.A2.backgroundColor}}>
+                style={squareStyle("A2")}>
                     
             </button>
             <button // B2
                 name="B2"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.B2.backgroundColor}}>
+                style={squareStyle("B2")}>
                     
             </button>
             <button // C2
                 name="C2"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.C2.backgroundColor}}>
+                style={squareStyle("C2")}>
                     
             </button>
             <button // D2
                 name="D2"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.D2.backgroundColor}}>
+                style={squareStyle("D2")}>
                     
             </button>
-
-            <br></br>       
-
             <button // A3
                 name="A3"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.A3.backgroundColor}}>
+                style={squareStyle("A3")}>
                     
             </button>
             <button // B3
                 name="B3"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.B3.backgroundColor}}>
+                style={squareStyle("B3")}>
                     
             </button>
             <button // C3
                 name="C3"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.C3.backgroundColor}}>
+                style={squareStyle("C3")}>
                     
             </button>
             <button // D3
                 name="D3"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.D3.backgroundColor}}>
+                style={squareStyle("D3")}>
                     
             </button>
-
-            <br></br>
-
             <button // A4
                 name="A4"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.A4.backgroundColor}}>
+                style={squareStyle("A4")}>
                     
             </button>
             <button // B4
                 name="B4"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.B4.backgroundColor}}>
+                style={squareStyle("B4")}>
                     
             </button>
             <button // C4
                 name="C4"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.C4.backgroundColor}}>
+                style={squareStyle("C4")}>
                     
             </button>
             <button // D4
                 name="D4"
+                className="square"
                 onClick={selectButton}
-                style={{backgroundColor: boardState.D4.backgroundColor}}>
+                style={squareStyle("D4")}>
                     
             </button>
+            </div>
 
-            <br></br>
+            {(isSpectator) && <p className="text-slate-500">You are spectating.</p>}
+            {(gameState.started && !isSpectator && !isMyTurn) && <p className="text-slate-500">Waiting for the other player...</p>}
 
-            <button // submit l-move button
-                onClick={sendLMove}>
-                    Send l-move
-            </button>
+            {(isMyTurn && gameState.phase === "l-move") && <div className="flex gap-2">
+                <button // submit l-move button
+                    className="btn"
+                    onClick={sendLMove}>
+                        Make L-move
+                </button>
+            </div>}
 
-            <button // submit coin move button
-                onClick={sendCoinMove}>
-                    Send coin move
-            </button>
+            {(isMyTurn && gameState.phase === "coin-move") && <div className="flex gap-2">
+                <button // submit coin move button
+                    className="btn"
+                    onClick={sendCoinMove}>
+                        Make coin move
+                </button>
+                <button // coin move is optional
+                    className="btn-secondary"
+                    onClick={() => sendPhaseChange("l-move")}>
+                        Skip coin move
+                </button>
+            </div>}
+        </div>
+
+        <aside className="card flex flex-col gap-3 md:w-80">
+            <h2>Chat</h2>
+            <div className="flex h-80 flex-col gap-1 overflow-y-auto text-sm">
+                {(chatHistory.length === 0) && <p className="text-slate-400">No messages yet.</p>}
+                {chatHistory.map((msg, index) => (
+                    <p key={index} className="break-words">
+                        <span className="font-semibold" style={{color: senderColour(msg.sender)}}>
+                            {msg.sender}
+                        </span>: {msg.text}
+                    </p>
+                ))}
+                <div ref={chatEnd} />
+            </div>
+            <form className="flex gap-2" onSubmit={sendMessage}>
+                <input
+                    value={localMsg}
+                    onChange={handleChange}
+                    name="text"
+                    placeholder={isSpectator ? "Message (spectators only)..." : "Message..."} />
+                <button className="btn" type="submit">Send</button>
+            </form>
+        </aside>
         </div>
     );
 }

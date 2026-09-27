@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 export function Computer() {
 
     return (
-        <div>
+        <div className="card">
             Computer page
         </div>
     );
