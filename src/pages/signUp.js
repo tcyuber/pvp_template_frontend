@@ -23,7 +23,7 @@ export function SignUp() {
         let header = {
             "Content-Type": "application/json",
         }
-        let unique = await fetch("http://localhost:8008/find-account", {
+        let unique = await fetch(`${process.env.REACT_APP_API_URL}/find-account`, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: header,
@@ -52,7 +52,7 @@ export function SignUp() {
         let header = {
             "Content-Type": "application/json",
         }
-        await fetch("http://localhost:8008/add-account", {
+        await fetch(`${process.env.REACT_APP_API_URL}/add-account`, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: header

@@ -10,7 +10,7 @@ export function AccountList() {
             let header = {
                 "Content-Type": "application/json"
             }
-            let request = await fetch('http://localhost:8008/fetch-accounts', {
+            let request = await fetch(`${process.env.REACT_APP_API_URL}/fetch-accounts`, {
                 method: 'GET',
                 headers: header,
                 signal: controller.signal

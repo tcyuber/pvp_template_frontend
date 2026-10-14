@@ -1,33 +1,12 @@
 import { useNavigate } from "react-router-dom"
 import { useState, useEffect, useRef } from 'react'
 import cookieParser from '../cookieParser'
-
-const INITIAL_BOARD = {
-    A1: {backgroundColor: 'black'},
-    A2: {backgroundColor: 'grey'},
-    A3: {backgroundColor: 'grey'},
-    A4: {backgroundColor: 'grey'},
-
-    B1: {backgroundColor: 'red'},
-    B2: {backgroundColor: 'blue'},
-    B3: {backgroundColor: 'blue'},
-    B4: {backgroundColor: 'blue'},
-    
-    C1: {backgroundColor: 'red'},
-    C2: {backgroundColor: 'red'},
-    C3: {backgroundColor: 'red'},
-    C4: {backgroundColor: 'blue'},
-
-    D1: {backgroundColor: 'grey'},
-    D2: {backgroundColor: 'grey'},
-    D3: {backgroundColor: 'grey'},
-    D4: {backgroundColor: 'black'}
-};
+import { GameBoard, INITIAL_BOARD, PLAYER_COLOURS, canSelect, toggleSelection, isValidLMove, isValidCoinMove, lMoveChanges, coinMoveChanges } from '../models/gameBoard'
 
 export function PlayerMatch() {
     const connection = useRef(null);                    // socket
     const navigate = useNavigate();                     // send them back to log-in
-    const [chatHistory, setChatHistory] = useState([]); // [{sender, text}] received from the server
+    const [chatHistory, setChatHistory] = useState([]); // [{sender, text, whisper}] received from the server, plus local whispers
     const [localMsg, setLocalMsg] = useState("");       // msg being typed
     const chatEnd = useRef(null);                       // for scrolling to newest msg
     // phases (state diagram waow):
@@ -54,20 +33,6 @@ export function PlayerMatch() {
     const isMyTurn = gameState.started && gameState.player_turn === myPlayer;
     const isSpectator = myPlayer === "spectator";
 
-    const playerColours = {player_1: 'red', player_2: 'blue'};
-    const selectedColours = {player_1: '#FFB6C1', player_2: '#89CFF0'};   // light pink, baby blue
-    const coinSelectedColour = '#D3D3D3';                                  // light grey
-
-    // selected squares are shown in the selecting player's highlight colour,
-    // or light grey when selecting coins
-    const squareStyle = (name) => ({
-        backgroundColor: !selectedSquares.includes(name)
-            ? boardState[name].backgroundColor
-            : (gameState.phase === "coin-move")
-                ? coinSelectedColour
-                : selectedColours[gameState.player_turn]
-    });
-
     // ---------------------------------------------------------------------------------------------------------------------
     //                                                    HOOKS
     // ---------------------------------------------------------------------------------------------------------------------
@@ -89,7 +54,7 @@ export function PlayerMatch() {
         console.log("start");
 
         // Socket object
-        const socket = new WebSocket("ws://localhost:3001?user="+user); // url must be the same as app, but with ws protocol instead of http
+        const socket = new WebSocket(`${process.env.REACT_APP_WS_URL}?user=${user}`); // url must be the same as app, but with ws protocol instead of http
 
         // Socket listen for connection opened
         socket.addEventListener("open", () => {
@@ -126,7 +91,7 @@ export function PlayerMatch() {
                 const { player_turn, phase, board_changes } = parsed_message.msg_content;
                 const board = {...INITIAL_BOARD};
                 for (const square in board_changes) {
-                    board[square] = {backgroundColor: board_changes[square]};
+                    board[square] = board_changes[square];
                 }
                 setBoardState(board);
                 setGameState(prevState => ({...prevState, started: true, player_turn, phase}));
@@ -134,6 +99,8 @@ export function PlayerMatch() {
                 setGameState(prevState => ({...prevState, started: false}));
             } else if (parsed_message.msg_type == "chat") {
                 printMsg(parsed_message);
+            } else if (parsed_message.msg_type == "game-log") {
+                setChatHistory(prevHistory => [...prevHistory, {sender: parsed_message.sender, squares: parsed_message.msg_content.squares, log: true}]);
             } else if (parsed_message.msg_type == "l-move") {
                 makeMove(parsed_message);
             } else if (parsed_message.msg_type == "coin-move") {
@@ -169,6 +136,15 @@ export function PlayerMatch() {
     const sendMessage = (e) => {
         e.preventDefault();
         if (localMsg.trim() === "") return;
+        // whispers ("/w msg") are only visible to the sender, so they never reach the server
+        if (localMsg.startsWith("/w ")) {
+            const text = localMsg.slice(3).trim();
+            if (text !== "") {
+                setChatHistory(prevHistory => [...prevHistory, {sender: user, text, whisper: true}]);
+            }
+            setLocalMsg("");
+            return;
+        }
         let message = {
             msg_type: "chat",
             msg_content: localMsg
@@ -180,10 +156,13 @@ export function PlayerMatch() {
 
     // players' names are shown in their piece colour, spectators in green
     const senderColour = (sender) => {
-        if (sender === gameState.player_1) return playerColours.player_1;
-        if (sender === gameState.player_2) return playerColours.player_2;
+        if (sender === gameState.player_1) return PLAYER_COLOURS.player_1;
+        if (sender === gameState.player_2) return PLAYER_COLOURS.player_2;
         return 'green';
     }
+
+    // spectator messages are shown in italics
+    const isSpectatorSender = (sender) => sender !== gameState.player_1 && sender !== gameState.player_2;
 
     // keep the newest message in view
     useEffect(() => {
@@ -224,40 +203,10 @@ export function PlayerMatch() {
     //                                                BUTTON FUNCTIONS
     // ---------------------------------------------------------------------------------------------------------------------
 
-    // makes sure only legal moves are selected depending on game phase
-    const selectButton = (e) => {
-        if (!isMyTurn) return;
-        console.log("phase: "+gameState.phase);
-        if (gameState.phase == "l-move") {
-            if (boardState[e.target.name].backgroundColor == 'grey') {
-                updateSelected(e.target.name);
-            } else {
-                if ((gameState.player_turn == "player_1" && 
-                    boardState[e.target.name].backgroundColor == 'red') ||
-
-                    (gameState.player_turn == "player_2" && 
-                    boardState[e.target.name].backgroundColor == 'blue')) {
-
-                    updateSelected(e.target.name);
-                }
-            }
-        } else if (gameState.phase == "coin-move") {
-            if ((boardState[e.target.name].backgroundColor == 'black') || 
-                (boardState[e.target.name].backgroundColor == 'grey')) {
-                updateCoinSelected(e.target.name);
-            }
-        }
-    }
-
-    // at most one coin (black) and one destination (grey) can be selected;
-    // selecting a new square replaces the selected square of the same colour
-    const updateCoinSelected = (name) => {
-        const colour = boardState[name].backgroundColor;
-        setSelectedSquares(prevSelectedSquares => (
-            prevSelectedSquares.includes(name)
-                ? prevSelectedSquares.filter(square => square !== name)
-                : [...prevSelectedSquares.filter(square => boardState[square].backgroundColor !== colour), name]
-        ));
+    // only squares that are legal for the current phase can be selected
+    const handleSquareClick = (square) => {
+        if (!isMyTurn || !canSelect(boardState, square, gameState.phase, gameState.player_turn)) return;
+        setSelectedSquares(prev => toggleSelection(boardState, prev, square, gameState.phase));
     }
 
     // ---------------------------------------------------------------------------------------------------------------------
@@ -269,28 +218,18 @@ export function PlayerMatch() {
     // assumes whatever alteration it makes is legal
     const makeMove = (parsed_message) => {
         setBoardState(prevBoardState => ({
-            ...prevBoardState, [parsed_message.msg_content.square]: {...prevBoardState[parsed_message.msg_content.square], backgroundColor: parsed_message.msg_content.colour}
+            ...prevBoardState, [parsed_message.msg_content.square]: parsed_message.msg_content.piece
         }));
         setSelectedSquares(prevSelectedSquares => prevSelectedSquares.filter(square => square !== parsed_message.msg_content.square));
     }
 
-    // called local only because if socket reciever calls it it doesnt work for some reason (socket reciever just mimics functionality)
-    // for selectedSquares list only
-    const updateSelected = (name) => {
-        if (!selectedSquares.includes(name)) {
-            setSelectedSquares(prevSelectedSquares => ([...prevSelectedSquares, name]));
-        } else {
-            setSelectedSquares(prevSelectedSquares => prevSelectedSquares.filter(square => square !== name));
-        }
-    }
-
     // send data for single square to server for it to be updated on both peoples board
-    const updateSquare = (type, name, colour) => {
+    const updateSquare = (type, name, piece) => {
         let message = {
             msg_type: type,
             msg_content: {
                 square: name,
-                colour: colour
+                piece: piece
             }
         };
         console.log("["+user+"] making l-move");
@@ -303,94 +242,19 @@ export function PlayerMatch() {
 
     // does server calls. doesn't do 4 squares at once but consecutively sends 4 different squares
     const sendLMove = () => {
-        if (isValidLMove()) {
-            let player_colour = (gameState.player_turn == "player_1") ? ('red') : ('blue');
-            // reset all the old ones to grey
-            for (const square in boardState) {
-                if (boardState[square].backgroundColor == player_colour) {
-                    console.log("rewriting "+square);
-                    updateSquare('l-move', square, 'grey');
-                }
-            }
-            // change new ones to player_colour
-            selectedSquares.forEach((square) => {
-                updateSquare('l-move', square, player_colour);
-            });
-            // only the moving player sends the phase change, once
-            sendPhaseChange("coin-move");
-        } else {
+        if (!isValidLMove(boardState, selectedSquares, gameState.player_turn)) {
             console.log("not a valid l-move");
+            return;
         }
-    }
-
-    // checks whether player l-move is valid.
-    // is allowed to assume that only legal moves were made
-    const isValidLMove = () => {
-        // a move can be made iff wlog both:
-        // 1. there are 3 of the same letter and the last one is adjacent
-        // 2. there are 3 different numbers which are consecutive, they all have a count of 1 except for the largest xor smallest which has a count of 2
-        if (selectedSquares.length != 4) {
-            return false;
-        }
-        let freq = {
-            letters: {A: 0, B: 0, C: 0, D: 0, E: 0},
-            nums: {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}                      // E and 5 are there so that the itteration doesnt go out of bounds
-        };
-        for (let i = 0; i < 4; i++) {
-            freq.letters[selectedSquares[i][0]] += 1;
-            freq.nums[selectedSquares[i][1]] += 1;
-        }
-        let permutation = {
-            letter1: false,
-            letter2: false,
-            num1: false,
-            num2: false
-        };
-
-        // check conditions among letters
-        ['A', 'B', 'C'].forEach(i => {
-            // checking for condition 1
-            if ((freq.letters[i] == 1 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 1)] == 3) || 
-                (freq.letters[i] == 3 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 1)] == 1)) {
-                    permutation.letter1 = true;
-                }
-            // checking for condition 2 (note that when on C it will always return false)
-            if ((freq.letters[i] == 2 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 1)] == 1 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 2)] == 1) ||
-                (freq.letters[i] == 1 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 1)] == 1 && freq.letters[String.fromCharCode(i.charCodeAt(0) + 2)] == 2)) {
-                    permutation.letter2 = true;
-                }
-            }
-        )
-        console.log("for some reason the code breaks if this log isnt here 😭");
-        // check conditions among numbers
-        [1, 2, 3].forEach(i => {
-            // checking for condition 1
-            if ((freq.nums[i] == 1 && freq.nums[i+1] == 3) || 
-                (freq.nums[i] == 3 && freq.nums[i+1] == 1)) {
-                    permutation.num1 = true;
-                }
-            // checking for condition 2 (note that when on 3 it will always return false)
-            if ((freq.nums[i] == 2 && freq.nums[i+1] == 1 && freq.nums[i+2] == 1) ||
-                (freq.nums[i] == 1 && freq.nums[i+1] == 1 && freq.nums[i+2] == 2)) {
-                    permutation.num2 = true;
-                }
-        })
-
-        // in practice the same condition for both letter and num cant both be true because of pigeonhole principle
-        if ((permutation.letter1 != permutation.letter2) && (permutation.num1 != permutation.num2)) {
-            selectedSquares.forEach((square) => {
-                // don't need to check who's turn it is because the selection process ensures that the player can rearrange only on their own pieces
-                if (boardState[square].backgroundColor != "red" && boardState[square].background != "blue") {
-                    // return true once any square deviates
-                    return true;
-                }
-            })
-            // only happens if every square overlaps with old l piece, meaning piece wasn't moved
-            return true;
-        } else {
-            return false;
-        }
-
+        lMoveChanges(boardState, selectedSquares, gameState.player_turn)
+            .forEach(([square, piece]) => updateSquare('l-move', square, piece));
+        // game log: the new L's squares, in board order
+        connection.current.send(JSON.stringify({
+            msg_type: "game-log",
+            msg_content: { squares: [...selectedSquares].sort() }
+        }));
+        // only the moving player sends the phase change, once
+        sendPhaseChange("coin-move");
     }
 
     // ---------------------------------------------------------------------------------------------------------------------
@@ -399,40 +263,13 @@ export function PlayerMatch() {
 
     // does sequence of server calls
     const sendCoinMove = () => {
-        if (isValidCoinMove()) {
-            // where coin previously was is now grey, where empty was is now coin
-            selectedSquares.forEach((square) => {
-                if (boardState[square].backgroundColor == 'grey') {
-                    updateSquare('coin-move', square, 'black');
-                } else if (boardState[square].backgroundColor == 'black') {
-                    updateSquare('coin-move', square, 'grey');
-                }
-            });
-            sendPhaseChange("l-move");
-        } else {
+        if (!isValidCoinMove(boardState, selectedSquares)) {
             console.log("not a valid coin move");
+            return;
         }
-    }
-
-    // has to only check if exactly two squares are selected, and if exactly one of them is black and exactly one of them is grey
-    const isValidCoinMove = () => {
-        if (selectedSquares.length != 2) {
-            console.log("bad size");
-            return false;
-        }
-        let freq = {
-            black: 0,
-            grey: 0
-        };
-        for (let i = 0; i < 2; i++) {
-            if (boardState[selectedSquares[i]].backgroundColor == 'grey') {
-                freq.grey += 1;
-            } else if (boardState[selectedSquares[i]].backgroundColor == 'black') {
-                freq.black += 1;
-            }
-        }
-        console.log("")
-        return ((freq.black == 1) && (freq.grey == 1));
+        coinMoveChanges(boardState, selectedSquares)
+            .forEach(([square, piece]) => updateSquare('coin-move', square, piece));
+        sendPhaseChange("l-move");
     }
 
     // ---------------------------------------------------------------------------------------------------------------------
@@ -446,127 +283,19 @@ export function PlayerMatch() {
             {(!gameState.started) && <p className="text-slate-500">Waiting for another player to join...</p>}
             {(gameState.started) && <>
                 <p>
-                    <span className="font-semibold" style={{color: playerColours[gameState.player_turn]}}>
+                    <span className="font-semibold" style={{color: PLAYER_COLOURS[gameState.player_turn]}}>
                         {gameState[gameState.player_turn]}
                     </span>'s turn to move...
                 </p>
                 <p>Phase: {gameState.phase}</p>
             </>}
 
-            <div className="board">
-            <button // A1
-                name="A1"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("A1")}>
-                    
-            </button>
-            <button // B1
-                name="B1"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("B1")}>
-                    
-            </button>
-            <button // C1
-                name="C1"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("C1")}>
-                    
-            </button>
-            <button // D1
-                name="D1"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("D1")}>
-                    
-            </button>
-            <button // A2
-                name="A2"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("A2")}>
-                    
-            </button>
-            <button // B2
-                name="B2"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("B2")}>
-                    
-            </button>
-            <button // C2
-                name="C2"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("C2")}>
-                    
-            </button>
-            <button // D2
-                name="D2"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("D2")}>
-                    
-            </button>
-            <button // A3
-                name="A3"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("A3")}>
-                    
-            </button>
-            <button // B3
-                name="B3"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("B3")}>
-                    
-            </button>
-            <button // C3
-                name="C3"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("C3")}>
-                    
-            </button>
-            <button // D3
-                name="D3"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("D3")}>
-                    
-            </button>
-            <button // A4
-                name="A4"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("A4")}>
-                    
-            </button>
-            <button // B4
-                name="B4"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("B4")}>
-                    
-            </button>
-            <button // C4
-                name="C4"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("C4")}>
-                    
-            </button>
-            <button // D4
-                name="D4"
-                className="square"
-                onClick={selectButton}
-                style={squareStyle("D4")}>
-                    
-            </button>
-            </div>
+            <GameBoard
+                board={boardState}
+                selected={selectedSquares}
+                phase={gameState.phase}
+                playerTurn={gameState.player_turn}
+                onSquareClick={handleSquareClick} />
 
             {(isSpectator) && <p className="text-slate-500">You are spectating.</p>}
             {(gameState.started && !isSpectator && !isMyTurn) && <p className="text-slate-500">Waiting for the other player...</p>}
@@ -574,6 +303,7 @@ export function PlayerMatch() {
             {(isMyTurn && gameState.phase === "l-move") && <div className="flex gap-2">
                 <button // submit l-move button
                     className="btn"
+                    disabled={selectedSquares.length !== 4}
                     onClick={sendLMove}>
                         Make L-move
                 </button>
@@ -582,6 +312,7 @@ export function PlayerMatch() {
             {(isMyTurn && gameState.phase === "coin-move") && <div className="flex gap-2">
                 <button // submit coin move button
                     className="btn"
+                    disabled={selectedSquares.length !== 2}
                     onClick={sendCoinMove}>
                         Make coin move
                 </button>
@@ -597,13 +328,20 @@ export function PlayerMatch() {
             <h2>Chat</h2>
             <div className="flex h-80 flex-col gap-1 overflow-y-auto text-sm">
                 {(chatHistory.length === 0) && <p className="text-slate-400">No messages yet.</p>}
-                {chatHistory.map((msg, index) => (
-                    <p key={index} className="break-words">
+                {chatHistory.map((msg, index) => msg.log
+                    ? <p key={index} className="break-words italic">
                         <span className="font-semibold" style={{color: senderColour(msg.sender)}}>
                             {msg.sender}
-                        </span>: {msg.text}
+                        </span> made a move: {msg.squares.join(", ")}
                     </p>
-                ))}
+                    : <p key={index} className={"break-words"
+                        + (msg.whisper ? " italic text-slate-500" : "")
+                        + (!msg.whisper && isSpectatorSender(msg.sender) ? " italic" : "")}>
+                        <span className="font-semibold" style={{color: senderColour(msg.sender)}}>
+                            {msg.sender}
+                        </span>{msg.whisper && " (whisper)"}: {msg.text}
+                    </p>
+                )}
                 <div ref={chatEnd} />
             </div>
             <form className="flex gap-2" onSubmit={sendMessage}>
@@ -611,7 +349,7 @@ export function PlayerMatch() {
                     value={localMsg}
                     onChange={handleChange}
                     name="text"
-                    placeholder={isSpectator ? "Message (spectators only)..." : "Message..."} />
+                    placeholder={isSpectator ? "Message (spectators only)... /w to whisper" : "Message... /w to whisper"} />
                 <button className="btn" type="submit">Send</button>
             </form>
         </aside>

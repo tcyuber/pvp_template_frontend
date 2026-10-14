@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import cookieParser from '../cookieParser.js'
 
-export function LogIn() {   
+export function LogIn() {
 
     // {username: <str>, pass: <val>}
-    const [account, setAccount] = useState({username: cookieParser(document.cookie).user, pass: cookieParser(document.cookie).pass});
+    const [account, setAccount] = useState({ username: cookieParser(document.cookie).user, pass: cookieParser(document.cookie).pass });
     const [state, setState] = useState("typing");
 
     const navigate = useNavigate();
@@ -19,8 +19,8 @@ export function LogIn() {
         });
     }, []);
 
-    const handleChange = (e) =>  {
-        setAccount(prev=>({...prev, [e.target.name]: e.target.value}));
+    const handleChange = (e) => {
+        setAccount(prev => ({ ...prev, [e.target.name]: e.target.value }));
     }
 
     const handleClick = async e => {
@@ -32,33 +32,33 @@ export function LogIn() {
         let header = {
             "Content-Type": "application/json"
         };
-        let matched = await fetch('http://localhost:8008/find-account', {
+        let matched = await fetch(`${process.env.REACT_APP_API_URL}/find-account`, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: header,
             signal: controller.signal
         })
-        .then(response => response.json())
-        .then(res => {
-            if (res == []) {
-                setState("fail");
+            .then(response => response.json())
+            .then(res => {
+                if (res == []) {
+                    setState("fail");
+                    return false;
+                }
+                else if ((res[0].user === account.user) && (res[0].pass == account.pass)) {
+                    return true;
+                } else {
+                    setState("fail");
+                    return false;
+                }
+            })
+            .catch(() => {
+                setState("error");
                 return false;
-            }
-            else if ((res[0].user === account.user) && (res[0].pass == account.pass)) {
-                return true;
-            } else {
-                setState("fail");
-                return false;
-            }
-        })
-        .catch(() => {
-            setState("error");
-            return false;
-        });
+            });
 
         return matched;
     };
-    
+
     useEffect(() => {
         if (state === "submitting") {
             let data = {
@@ -68,8 +68,8 @@ export function LogIn() {
             let logIn = async () => {
                 let matched = await matchAccount(data);
                 if (!matched) return;
-                document.cookie = "username="+data.username;
-                document.cookie = "pass="+data.pass;
+                document.cookie = "username=" + data.username;
+                document.cookie = "pass=" + data.pass;
                 setState("success");
             }
             logIn();
@@ -84,14 +84,14 @@ export function LogIn() {
     return (
         <div className="form">
             <h1>Log In</h1>
-            <input 
+            <input
                 type="text"
                 value={account.username}
                 placeholder="Username"
                 disabled={state === "submitting"}
                 onChange={handleChange} name="username"
             />
-            <input 
+            <input
                 type="password"
                 value={account.pass}
                 placeholder="Password"

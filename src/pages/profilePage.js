@@ -16,7 +16,7 @@ export function ProfilePage() {
         const header = {
             "Content-Type": "application/json",
         };
-        fetch('http://localhost:8008/find-account', {
+        fetch(`${process.env.REACT_APP_API_URL}/find-account`, {
             method: 'POST',
             body: JSON.stringify(data),
             headers: header

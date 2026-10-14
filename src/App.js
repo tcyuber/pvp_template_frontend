@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
+import { AppBar } from './components/appBar';
 import { AccountList } from './pages/accountList';  
 import { Computer } from './pages/computer';
 import { Home } from './pages/home';
@@ -10,6 +11,8 @@ import { SignUp } from './pages/signUp';
 
 function App() {
   return (
+    <>
+    <AppBar />
     <main className="page">
     <Routes>
       <Route index element={<Home />} />
@@ -22,6 +25,7 @@ function App() {
       <Route path="/profile-page" element={<ProfilePage />} />
     </Routes>
     </main>
+    </>
   );
 }
 
